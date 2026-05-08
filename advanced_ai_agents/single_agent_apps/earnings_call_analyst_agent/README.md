@@ -1,4 +1,4 @@
-# 📈 Earnings Call Analyst Agent
+# 🧾 Earnings Call Analyst Agent
 
 An investor-grade earnings call companion that turns any YouTube earnings call into a playback-synced analyst workspace. Paste a call URL, watch the video, and let ADK agents surface the numbers, tone shifts, filing context, and market-moving surprises that are easy to miss in a live call.
 
