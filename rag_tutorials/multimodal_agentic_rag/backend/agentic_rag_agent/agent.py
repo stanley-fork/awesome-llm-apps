@@ -30,7 +30,7 @@ For every user question:
 5. Start with a clear direct answer in 2-3 sentences.
 6. If helpful, add a short "Key points:" section with simple hyphen bullets.
 7. Explain briefly when the vector evidence is weak or sparse.
-8. Keep the answer useful, direct, and demo-friendly.
+8. Keep the answer useful and direct.
 """,
         tools=[inspect_embedding_space, retrieval_tool],
         generate_content_config=genai_types.GenerateContentConfig(

@@ -1,6 +1,6 @@
 # Multimodal Agentic RAG
 
-This is a local multimodal RAG demo built with Gemini Embedding 2 and Google ADK. Add text, URLs, PDFs, images, audio, or video; ask a question; and get a grounded answer with clear citations.
+This is a multimodal RAG app built with Gemini Embedding 2 and Google ADK. Add text, URLs, PDFs, images, audio, or video; ask a question; and get a grounded answer with clear citations.
 
 The UI includes a 3D embedding view for inspecting the search space. Each source appears as one point. When you ask a question, the query is projected into the same space and the cited sources are highlighted.
 
@@ -9,8 +9,8 @@ The UI includes a 3D embedding view for inspecting the search space. Each source
 ## What It Does
 
 - Adds and removes multimodal sources from a local in-memory index.
-- Uses Gemini Embedding 2 for source and query embeddings when `GOOGLE_API_KEY` is set.
-- Falls back to deterministic local vectors when no API key is available, so the UI can still be tested.
+- Uses Gemini Embedding 2 for source and query embeddings.
+- Requires `GOOGLE_API_KEY`; the app does not use local vector or answer fallbacks.
 - Retrieves evidence with cosine similarity over the stored embeddings.
 - Runs a Google ADK agent to coordinate answer generation from the retrieved context.
 - Shows citations separately from the answer text so citation IDs do not clutter the response.

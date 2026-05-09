@@ -14,6 +14,8 @@ from starlette.concurrency import run_in_threadpool
 
 from app_state import RAG_STORE
 
+SETUP_ERROR = ""
+
 try:
     from google.adk.runners import Runner
     from google.adk.sessions import InMemorySessionService
@@ -25,6 +27,10 @@ except Exception:
     InMemorySessionService = None
     build_agent = None
     ADK_AVAILABLE = False
+    SETUP_ERROR = "Google ADK could not be imported. Install backend requirements and set GOOGLE_API_KEY."
+
+if not os.getenv("GOOGLE_API_KEY"):
+    SETUP_ERROR = "GOOGLE_API_KEY is required for Gemini Embedding 2 and the ADK answer flow."
 
 
 APP_NAME = "multimodal_agentic_rag"
@@ -103,21 +109,9 @@ def _event_text(event: Any) -> str:
     return "".join(fragments)
 
 
-def _fallback_answer(retrieval: dict[str, Any]) -> str:
-    matches = retrieval.get("matches", [])
-    if not matches:
-        return "I could not find relevant evidence in the current sources."
-
-    lead = matches[0]
-    answer = f"The strongest evidence points to {lead['source']} as the most relevant source for this question."
-    if len(matches) > 1:
-        answer += f" I also found supporting context in {len(matches) - 1} other source{'s' if len(matches) != 2 else ''}."
-    return answer
-
-
 async def _run_adk_agent(question: str, retrieval: dict[str, Any]) -> str:
     if not ADK_AVAILABLE:
-        return _fallback_answer(retrieval)
+        raise HTTPException(503, SETUP_ERROR or "Google ADK is unavailable.")
 
     def retrieve_relevant_context(query: str, top_k: int = 6) -> dict:
         """Return the exact retrieval packet already embedded for this request."""
@@ -144,7 +138,12 @@ async def _run_adk_agent(question: str, retrieval: dict[str, Any]) -> str:
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "adk": ADK_AVAILABLE, **await run_in_threadpool(RAG_STORE.space_tool)}
+    return {
+        "status": "ok" if ADK_AVAILABLE and not SETUP_ERROR else "setup_required",
+        "adk": ADK_AVAILABLE,
+        "setup_error": SETUP_ERROR,
+        **await run_in_threadpool(RAG_STORE.space_tool),
+    }
 
 
 @app.get("/space")

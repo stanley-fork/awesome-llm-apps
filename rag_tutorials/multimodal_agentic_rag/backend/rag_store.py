@@ -1,4 +1,3 @@
-import hashlib
 import math
 import os
 import re
@@ -87,25 +86,6 @@ def _chunk_text(text: str) -> list[str]:
     return chunks
 
 
-def _local_embedding(seed_text: str, dimensions: int = DEFAULT_DIMENSIONS) -> list[float]:
-    """Deterministic lexical fallback so the UI remains usable without a Google API key."""
-    vector = [0.0] * dimensions
-    tokens = re.findall(r"[a-z0-9][a-z0-9-]{1,}", seed_text.lower())
-    if not tokens:
-        tokens = [seed_text.lower()]
-
-    for token in tokens:
-        salt = hashlib.sha256(token.encode("utf-8", errors="ignore")).digest()
-        for i in range(0, dimensions, 8):
-            digest = hashlib.sha256(salt + i.to_bytes(4, "little")).digest()
-            for offset in range(min(8, dimensions - i)):
-                value = digest[offset] / 255.0
-                vector[i + offset] += (value * 2.0) - 1.0
-
-    norm = math.sqrt(sum(value * value for value in vector)) or 1.0
-    return [value / norm for value in vector]
-
-
 def _blend_vectors(primary: list[float], secondary: list[float], secondary_weight: float = 0.32) -> list[float]:
     primary_weight = 1.0 - secondary_weight
     blended = [
@@ -144,33 +124,12 @@ class MultimodalRagStore:
         self.chunks: list[RackChunk] = []
         self.events: list[dict[str, Any]] = []
         self._lock = threading.RLock()
-        self.embedding_provider = "gemini-embedding-2" if self.client else "local-demo"
-        self._seed_demo_sources()
+        self.embedding_provider = "gemini-embedding-2"
 
-    def _seed_demo_sources(self) -> None:
-        seed_sources = [
-            (
-                "Gemini Embedding 2 launch notes",
-                "text",
-                "Gemini Embedding 2 creates a shared vector space for text, images, audio, video, and PDFs. "
-                "For retrieval augmented generation, task prefixes separate document embeddings from query embeddings, "
-                "and output dimensionality can be truncated for latency-sensitive stores.",
-            ),
-            (
-                "ADK agentic RAG pattern",
-                "text",
-                "A Google Agent Development Kit coordinator should use tools for retrieval, inspect the evidence, "
-                "decide whether more context is needed, and answer with grounded citations from the workspace.",
-            ),
-            (
-                "Multimodal source catalog",
-                "pdf",
-                "A multimodal enterprise workspace may mix product PDFs, UI screenshots, call audio, launch videos, and "
-                "support notes in a single embedding index so a question can retrieve the right evidence across formats.",
-            ),
-        ]
-        for title, modality, text in seed_sources:
-            self.add_text_source(title=title, text=text, modality=modality, seed=True)
+    def _require_client(self) -> genai.Client:
+        if not self.client:
+            raise RuntimeError("GOOGLE_API_KEY is required for Gemini Embedding 2.")
+        return self.client
 
     def _emit(self, event_type: str, payload: dict[str, Any]) -> None:
         self.events.append({"type": event_type, "at": time.time(), **payload})
@@ -178,10 +137,9 @@ class MultimodalRagStore:
 
     def _embed_text(self, text: str, task_prefix: str) -> list[float]:
         content = f"{task_prefix}: {text}"
-        if not self.client:
-            return _local_embedding(content, self.dimensions)
+        client = self._require_client()
 
-        result = self.client.models.embed_content(
+        result = client.models.embed_content(
             model=EMBED_MODEL,
             contents=[content],
             config=types.EmbedContentConfig(output_dimensionality=self.dimensions),
@@ -189,13 +147,14 @@ class MultimodalRagStore:
         return result.embeddings[0].values
 
     def _embed_uploaded_file(self, data: bytes, mime_type: str, title: str) -> list[float]:
+        client = self._require_client()
         suffix = Path(title).suffix or self._suffix_from_mime(mime_type)
         uploaded = None
         try:
             with tempfile.NamedTemporaryFile(suffix=suffix, delete=True) as temp_file:
                 temp_file.write(data)
                 temp_file.flush()
-                uploaded = self.client.files.upload(
+                uploaded = client.files.upload(
                     file=temp_file.name,
                     config=types.UploadFileConfig(mime_type=mime_type, display_name=title),
                 )
@@ -206,14 +165,14 @@ class MultimodalRagStore:
                     raise ValueError("Gemini is still processing this media file. Try a shorter clip or upload it again in a moment.")
                 time.sleep(FILE_API_POLL_SECONDS)
                 waited += FILE_API_POLL_SECONDS
-                uploaded = self.client.files.get(name=uploaded.name)
+                uploaded = client.files.get(name=uploaded.name)
 
             state_name = getattr(getattr(uploaded, "state", None), "name", "")
             if state_name and state_name not in {"ACTIVE", "SUCCEEDED"}:
                 raise ValueError(f"Gemini could not process this media file. File state: {state_name}.")
 
             part = types.Part.from_uri(file_uri=uploaded.uri, mime_type=mime_type)
-            result = self.client.models.embed_content(
+            result = client.models.embed_content(
                 model=EMBED_MODEL,
                 contents=[part],
                 config=types.EmbedContentConfig(output_dimensionality=self.dimensions),
@@ -223,14 +182,12 @@ class MultimodalRagStore:
             uploaded_name = getattr(uploaded, "name", None)
             if uploaded_name:
                 try:
-                    self.client.files.delete(name=uploaded_name)
+                    client.files.delete(name=uploaded_name)
                 except Exception as exc:
                     self._emit("file_cleanup_failed", {"name": uploaded_name, "error": str(exc)})
 
     def _embed_file(self, data: bytes, mime_type: str, title: str, notes: str) -> tuple[list[float], str]:
-        if not self.client:
-            seed = f"{mime_type}:{title}:{notes}:{hashlib.sha256(data).hexdigest()}"
-            return _local_embedding(seed, self.dimensions), "local-fallback"
+        client = self._require_client()
 
         use_file_api = (
             len(data) > INLINE_MEDIA_LIMIT_BYTES
@@ -242,7 +199,7 @@ class MultimodalRagStore:
 
         part = types.Part.from_bytes(data=data, mime_type=mime_type)
         try:
-            result = self.client.models.embed_content(
+            result = client.models.embed_content(
                 model=EMBED_MODEL,
                 contents=[part],
                 config=types.EmbedContentConfig(output_dimensionality=self.dimensions),
